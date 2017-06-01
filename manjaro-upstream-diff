@@ -2,7 +2,7 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-declare -r -a architectures=('x86_64')
+declare -r -a architectures=('i686' 'x86_64')
 declare -r -a branches=('stable' 'unstable')
 declare -r -a repos=('core' 'extra' 'community' 'multilib')
 
@@ -38,10 +38,17 @@ for architecture in "${architectures[@]}"; do
 
 			echo " - Downloading Manjaro package list..."
 			cd "${manjaro_list_dir}"
-			wget -Nq "https://${mirror}/mirrors/manjaro/${branch}/${repo}/${architecture}/${repo}.db.tar.gz" || (echo "Error downloading"; exit 1)
+			if ! wget -Nq "https://${mirror}/mirrors/manjaro/${branch}/${repo}/${architecture}/${repo}.db.tar.gz"; then
+				echo -e "   * Error downloading\n"
+				break
+			fi
+
 			echo " - Downloading Arch package list..."
 			cd "${arch_list_dir}"
-			wget -Nq "https://${mirror}/mirrors/archlinux/${repo}/os/${architecture}/${repo}.db.tar.gz" || (echo "Error downloading"; exit 1)
+			if ! wget -Nq "https://${mirror}/mirrors/archlinux/${repo}/os/${architecture}/${repo}.db.tar.gz"; then
+				echo -e "   * Error downloading\n"
+				break
+			fi
 
 			echo " - Processing differences..."
 			cd "${workdir}"
