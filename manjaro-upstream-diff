@@ -1,0 +1,80 @@
+#!/bin/bash
+set -euo pipefail
+IFS=$'\n\t'
+
+declare -r -a architectures=('x86_64')
+declare -r -a branches=('stable' 'unstable')
+declare -r -a repos=('core' 'extra' 'community' 'multilib')
+
+declare -r mirror='ftp.heanet.ie'
+
+declare -r tmpdir="$(mktemp -d)"
+declare -r workdir="$(xdg-user-dir DOCUMENTS)/Manjaro/manjaro-upstream-diff"
+declare -r cachedir="${HOME}/.cache/manjaro-upstream-diff"
+mkdir -p "${workdir}" "${cachedir}"
+
+function trim() {
+	local var="$*"
+	var="${var#"${var%%[![:space:]]*}"}"
+	var="${var%"${var##*[![:space:]/]}"}"   
+	echo -n "${var}"
+}
+
+function finally() {
+	rm -fr "${tmpdir}"
+}
+trap finally EXIT
+
+for architecture in "${architectures[@]}"; do
+	for branch in "${branches[@]}"; do
+		for repo in "${repos[@]}"; do
+			declare ident_string="${architecture}-${branch}-${repo}"
+			echo "=> Processing ${ident_string}"
+
+			declare manjaro_list_dir="${cachedir}/manjaro/${architecture}/${branch}"
+			declare arch_list_dir="${cachedir}/arch/${architecture}"
+			mkdir -p "${manjaro_list_dir}"
+			mkdir -p "${arch_list_dir}"
+
+			echo " - Downloading Manjaro package list..."
+			cd "${manjaro_list_dir}"
+			wget -Nq "https://${mirror}/mirrors/manjaro/${branch}/${repo}/${architecture}/${repo}.db.tar.gz" || (echo "Error downloading"; exit 1)
+			echo " - Downloading Arch package list..."
+			cd "${arch_list_dir}"
+			wget -Nq "https://${mirror}/mirrors/archlinux/${repo}/os/${architecture}/${repo}.db.tar.gz" || (echo "Error downloading"; exit 1)
+
+			echo " - Processing differences..."
+			cd "${workdir}"
+			echo '"Package","Arch","Manjaro"' > "${tmpdir}/${ident_string}.csv"
+			while IFS=$'|<>()' read -r arch_raw manjaro_raw; do
+				unset IFS
+				arch_raw=$(trim "$arch_raw")
+				manjaro_raw=$(trim "$manjaro_raw")
+
+				declare arch_pkgname=''
+				declare arch_pkgver=''
+				declare manjaro_pkgname=''
+				declare manjaro_pkgver=''
+
+				if [ -n "$arch_raw" ]; then
+					arch_pkgname=$(echo "$arch_raw" | rev | cut -d'-' -f3- | rev)
+					arch_pkgver=$(echo "$arch_raw" | rev | cut -d'-' -f1-2 | rev)
+				fi
+
+				if [ -n "$manjaro_raw" ]; then
+					manjaro_pkgname=$(echo "$manjaro_raw" | rev | cut -d'-' -f3- | rev)
+					manjaro_pkgver=$(echo "$manjaro_raw" | rev | cut -d'-' -f1-2 | rev)
+				fi
+
+				echo "\"${arch_pkgname:-$manjaro_pkgname}\",\"${arch_pkgver}\",\"${manjaro_pkgver}\"" >> "${tmpdir}/${ident_string}.csv"
+
+			done <<< "$(diff -y --speed-large-files --suppress-common-lines \
+				<(tar --exclude='*/*' -tf "${arch_list_dir}/${repo}.db.tar.gz" | sort) \
+				<(tar --exclude='*/*' -tf "${manjaro_list_dir}/${repo}.db.tar.gz" | sort))"
+
+			cp -f "${tmpdir}/${ident_string}.csv" "${workdir}"
+
+			echo -e "=> Differences CSV now available at ${workdir}/${ident_string}.csv\n"
+		done
+	done
+done
